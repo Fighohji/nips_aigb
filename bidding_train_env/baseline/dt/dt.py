@@ -67,16 +67,17 @@ class Block(nn.Module):
 
 class DecisionTransformer(nn.Module):
 
-    def __init__(self, state_dim, act_dim, state_mean, state_std, action_tanh=False, K=10, max_ep_len=96, scale=2000,
-                 target_return=4):
+    def __init__(self, state_dim, act_dim, state_mean, state_std, action_tanh=False, K=24, max_ep_len=96, scale=2000,
+                 target_return=100 / 2 / 2000 * 2):
         super(DecisionTransformer, self).__init__()
-        self.device = "cpu"
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.length_times = 3
-        self.hidden_size = 64
+        self.hidden_size = 128
         self.state_mean = state_mean
         self.state_std = state_std
-        # assert self.hidden_size == config['n_embd']
+
+        # TODO: change self.max_len
         self.max_length = K
         self.max_ep_len = max_ep_len
 
@@ -91,9 +92,9 @@ class DecisionTransformer(nn.Module):
 
         block_config = {
             "n_ctx": 1024,
-            "n_embd": 64,
-            "n_layer": 3,
-            "n_head": 1,
+            "n_embd": 128,
+            "n_layer": 8,
+            "n_head": 4,
             "n_inner": 512,
             "activation_function": "relu",
             "n_position": 1024,
@@ -101,8 +102,21 @@ class DecisionTransformer(nn.Module):
             "attn_pdrop": 0.1
         }
 
+        # block_config = {
+        #     "n_ctx": 1024,
+        #     "n_embd": 64,
+        #     "n_layer": 3,
+        #     "n_head": 1,
+        #     "n_inner": 512,
+        #     "activation_function": "relu",
+        #     "n_position": 1024,
+        #     "resid_pdrop": 0.1,
+        #     "attn_pdrop": 0.1
+        # }
+
         self.transformer = nn.ModuleList([Block(block_config) for _ in range(block_config['n_layer'])])
 
+        # TODO: change self.max_ep_len
         self.embed_timestep = nn.Embedding(self.max_ep_len, self.hidden_size)
         self.embed_return = torch.nn.Linear(1, self.hidden_size)
         self.embed_reward = torch.nn.Linear(1, self.hidden_size)
@@ -159,6 +173,8 @@ class DecisionTransformer(nn.Module):
         return_preds = self.predict_return(x[:, 2])
         state_preds = self.predict_state(x[:, 2])
         action_preds = self.predict_action(x[:, 1])
+
+        # print(state_preds.shape, action_preds.shape, return_preds.shape)
         return state_preds, action_preds, return_preds, None
 
     def get_action(self, states, actions, rewards, returns_to_go, timesteps, **kwargs):
@@ -209,6 +225,7 @@ class DecisionTransformer(nn.Module):
     def step(self, states, actions, rewards, dones, rtg, timesteps, attention_mask):
         rewards_target, action_target, rtg_target = torch.clone(rewards), torch.clone(actions), torch.clone(rtg)
 
+        # 前向传播，得到状态、动作、回报和奖励的预测
         state_preds, action_preds, return_preds, reward_preds = self.forward(
             states, actions, rewards, rtg[:, :-1], timesteps, attention_mask=attention_mask,
         )
@@ -217,7 +234,10 @@ class DecisionTransformer(nn.Module):
         action_preds = action_preds.reshape(-1, act_dim)[attention_mask.reshape(-1) > 0]
         action_target = action_target.reshape(-1, act_dim)[attention_mask.reshape(-1) > 0]
 
-        loss = torch.mean((action_preds - action_target) ** 2)
+        # 计算动作的损失
+        action_loss = torch.mean((action_preds - action_target) ** 2)
+        
+        loss = action_loss
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -238,12 +258,14 @@ class DecisionTransformer(nn.Module):
             self.eval_states = torch.cat([self.eval_states, cur_state], dim=0)
             self.eval_rewards[-1] = pre_reward
             pred_return = self.eval_target_return[0, -1] - (pre_reward / self.scale)
+            # if target_return != None:
+            #     pred_return = target_return
             self.eval_target_return = torch.cat([self.eval_target_return, pred_return.reshape(1, 1)], dim=1)
             self.eval_timesteps = torch.cat(
                 [self.eval_timesteps, torch.ones((1, 1), dtype=torch.long) * self.eval_timesteps[:, -1] + 1], dim=1)
         self.eval_actions = torch.cat([self.eval_actions, torch.zeros(1, self.act_dim)], dim=0)
         self.eval_rewards = torch.cat([self.eval_rewards, torch.zeros(1)])
-
+        # print(self.eval_target_return[-1])
         action = self.get_action(
             (self.eval_states.to(dtype=torch.float32) - self.state_mean) / self.state_std,
             self.eval_actions.to(dtype=torch.float32),
