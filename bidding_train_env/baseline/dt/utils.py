@@ -8,7 +8,7 @@ import random
 import os
 
 class EpisodeReplayBuffer(Dataset):
-    def __init__(self, state_dim, act_dim, data_path, max_ep_len=48, scale=2000, K=24):
+    def __init__(self, state_dim, act_dim, data_path, max_ep_len=48, scale=200, K=48):
         self.device = "cpu"
         super(EpisodeReplayBuffer, self).__init__()
         self.max_ep_len = max_ep_len
@@ -16,6 +16,7 @@ class EpisodeReplayBuffer(Dataset):
 
         self.state_dim = state_dim
         self.act_dim = act_dim
+        self.act_scale = 10
         training_data = pd.read_csv(data_path)
 
         def safe_literal_eval(val):
@@ -28,7 +29,7 @@ class EpisodeReplayBuffer(Dataset):
                 return val
 
         training_data["state"] = training_data["state"].apply(safe_literal_eval)
-        training_data["next_state"] = training_data["next_state"].apply(safe_literal_eval)
+        # training_data["next_state"] = training_data["next_state"].apply(safe_literal_eval)
         self.trajectories = training_data
 
         self.states, self.rewards, self.actions, self.returns, self.traj_lens, self.dones, self.realCPA, self.constraintCPA = [], [], [], [], [], [], [], []
@@ -39,7 +40,7 @@ class EpisodeReplayBuffer(Dataset):
         for index, row in self.trajectories.iterrows():
             state.append(row["state"])
             reward.append(row['reward'])
-            action.append(row["action"])
+            action.append(row["action"] / self.act_scale)
             dones.append(row["done"])
             if row["done"]:
                 if len(state) != 1:
@@ -69,6 +70,23 @@ class EpisodeReplayBuffer(Dataset):
             self.trajectories.append(
                 {"observations": self.states[i], "actions": self.actions[i], "rewards": self.rewards[i],
                  "dones": self.dones[i]})
+
+        # self.K = K
+        # self.pct_traj = 1.
+
+        # num_timesteps = sum(self.traj_lens)
+        # num_timesteps = max(int(self.pct_traj * num_timesteps), 1)
+        # sorted_inds = np.argsort(self.returns)  # lowest to highest
+        # num_trajectories = 1
+        # timesteps = self.traj_lens[sorted_inds[-1]]
+        # ind = len(self.trajectories) - 2
+        # while ind >= 0 and timesteps + self.traj_lens[sorted_inds[ind]] <= num_timesteps:
+        #     timesteps += self.traj_lens[sorted_inds[ind]]
+        #     num_trajectories += 1
+        #     ind -= 1
+        # self.sorted_inds = sorted_inds[-num_trajectories:]
+
+        # self.p_sample = self.traj_lens[self.sorted_inds] / sum(self.traj_lens[self.sorted_inds])
 
         ''''''
         self.K = K

@@ -67,8 +67,8 @@ class Block(nn.Module):
 
 class DecisionTransformer(nn.Module):
 
-    def __init__(self, state_dim, act_dim, state_mean, state_std, action_tanh=False, K=24, max_ep_len=96, scale=2000,
-                 target_return=100 / 2 / 2000 * 2):
+    def __init__(self, state_dim, act_dim, state_mean, state_std, action_tanh=False, K=24, max_ep_len=96, scale=200,
+                 target_return=4):
         super(DecisionTransformer, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

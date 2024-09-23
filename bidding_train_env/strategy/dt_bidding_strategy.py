@@ -25,7 +25,8 @@ class DtBiddingStrategy(BaseBiddingStrategy):
         model_path = os.path.join(dir_name, "saved_model", "DTtest", "dt.pt")
         picklePath = os.path.join(dir_name, "saved_model", "DTtest", "normalize_dict.pkl")
         self.scale = 200
-        self.target_return = budget / cpa / self.scale * 4
+        # self.target_return = budget / cpa / self.scale * 8
+        self.target_return = 4
         with open(picklePath, 'rb') as f:
             normalize_dict = pickle.load(f)
         self.model = DecisionTransformer(state_dim=16, act_dim=1, state_mean=normalize_dict["state_mean"],
@@ -34,15 +35,14 @@ class DtBiddingStrategy(BaseBiddingStrategy):
 
     def reset(self):
         self.remaining_budget = self.budget
-        self.target_return = self.budget / self.cpa / self.scale * 4
+        self.target_return = 4
 
     def bidding(self, timeStepIndex, pValues, pValueSigmas, historyPValueInfo, historyBid,
                 historyAuctionResult, historyImpressionResult, historyLeastWinningCost):
         """
         Bids for all the opportunities in a delivery period
 
-        parameters:
-         @timeStepIndex: the index of the current decision time step.
+        parameters:         @timeStepIndex: the index of the current decision time step.
          @pValues: the conversion action probability.
          @pValueSigmas: the prediction probability uncertainty.
          @historyPValueInfo: the history predicted value and uncertainty for each opportunity.
