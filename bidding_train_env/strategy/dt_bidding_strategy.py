@@ -19,23 +19,27 @@ class DtBiddingStrategy(BaseBiddingStrategy):
 
     def __init__(self, budget=100, name="Decision-Transformer-PlayerStrategy", cpa=2, category=1):
         super().__init__(budget, name, cpa, category)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         file_name = os.path.dirname(os.path.realpath(__file__))
         dir_name = os.path.dirname(file_name)
         dir_name = os.path.dirname(dir_name)
-        model_path = os.path.join(dir_name, "saved_model", "DTtest", "dt.pt")
+        model_path = os.path.join(dir_name, "saved_model", "DTtest")
         picklePath = os.path.join(dir_name, "saved_model", "DTtest", "normalize_dict.pkl")
         self.scale = 200
-        # self.target_return = budget / cpa / self.scale * 8
-        self.target_return = 4
+        self.target_return = 1.2333333
+
         with open(picklePath, 'rb') as f:
             normalize_dict = pickle.load(f)
         self.model = DecisionTransformer(state_dim=16, act_dim=1, state_mean=normalize_dict["state_mean"],
                                          state_std=normalize_dict["state_std"])
-        self.model.load_net(model_path)
+        self.model.load_net(model_path + "/dt_reward.pt")
+        self.model.to(self.device)
+
 
     def reset(self):
         self.remaining_budget = self.budget
-        self.target_return = 4
+        self.target_return = 1.2333333
+
 
     def bidding(self, timeStepIndex, pValues, pValueSigmas, historyPValueInfo, historyBid,
                 historyAuctionResult, historyImpressionResult, historyLeastWinningCost):
@@ -89,44 +93,31 @@ class DtBiddingStrategy(BaseBiddingStrategy):
         current_pv_num = len(pValues)
 
         historical_pv_num_total = sum(len(bids) for bids in historyBid) if historyBid else 0
-        last_three_ticks = slice(max(0, timeStepIndex - 3), timeStepIndex)
         last_three_pv_num_total = sum(
             [len(historyBid[i]) for i in range(max(0, timeStepIndex - 3), timeStepIndex)]) if historyBid else 0
 
+        
+        total_conversion = sum(sum(i) for i in history_conversion)
+        total_cost = self.budget - self.remaining_budget
+
+        currentCPA = min(50000, total_cost / (total_conversion + 1e-10))
         test_state = np.array([
             time_left, budget_left, historical_bid_mean, last_three_bid_mean,
             historical_LeastWinningCost_mean, historical_pValues_mean, historical_conversion_mean,
             historical_xi_mean, last_three_LeastWinningCost_mean, last_three_pValues_mean,
             last_three_conversion_mean, last_three_xi_mean,
             current_pValues_mean, current_pv_num, last_three_pv_num_total,
-            historical_pv_num_total
+            historical_pv_num_total,
         ])
-
         if timeStepIndex == 0:
             self.model.init_eval()
-        
-        # target_return = self.target_return
-        # if timeStepIndex != 0 and timeStepIndex < 5:
-        #     target_return = None
-        # elif timeStepIndex != 0:
-        #     cur_CPA = min(50000, self.budget * (1 - budget_left) / (sum([sum(i) for i in history_conversion]) + 1e-5))
 
-        #     times = min(self.cpa / (cur_CPA + 1e-5), 4)
-        #     if cur_CPA == 50000:
-        #         times = 4
-        #     target_return = times * self.model.eval_target_return[0, -1] - (sum(history_conversion[-1]) / self.scale)
         alpha = 10 * self.model.take_actions(test_state,
                                         pre_reward=sum(history_conversion[-1]) if len(history_conversion) != 0 else None, target_return=self.target_return)
-        
 
         bids = alpha * pValues
-        
-
-
-        if budget_left - 1 / 48 > (48 - timeStepIndex - 1):
-            bids = alpha * 1.5 * pValues
-
 
         return bids
+    
 
 

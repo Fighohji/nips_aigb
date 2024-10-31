@@ -67,7 +67,7 @@ class Block(nn.Module):
 
 class DecisionTransformer(nn.Module):
 
-    def __init__(self, state_dim, act_dim, state_mean, state_std, action_tanh=False, K=24, max_ep_len=96, scale=200,
+    def __init__(self, state_dim, act_dim, state_mean, state_std, action_tanh=False, K=48, max_ep_len=48, scale=200,
                  target_return=4):
         super(DecisionTransformer, self).__init__()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -77,7 +77,6 @@ class DecisionTransformer(nn.Module):
         self.state_mean = state_mean
         self.state_std = state_std
 
-        # TODO: change self.max_len
         self.max_length = K
         self.max_ep_len = max_ep_len
 
@@ -94,7 +93,7 @@ class DecisionTransformer(nn.Module):
             "n_ctx": 1024,
             "n_embd": 128,
             "n_layer": 8,
-            "n_head": 4,
+            "n_head": 2,
             "n_inner": 512,
             "activation_function": "relu",
             "n_position": 1024,
@@ -102,21 +101,8 @@ class DecisionTransformer(nn.Module):
             "attn_pdrop": 0.1
         }
 
-        # block_config = {
-        #     "n_ctx": 1024,
-        #     "n_embd": 64,
-        #     "n_layer": 3,
-        #     "n_head": 1,
-        #     "n_inner": 512,
-        #     "activation_function": "relu",
-        #     "n_position": 1024,
-        #     "resid_pdrop": 0.1,
-        #     "attn_pdrop": 0.1
-        # }
-
         self.transformer = nn.ModuleList([Block(block_config) for _ in range(block_config['n_layer'])])
 
-        # TODO: change self.max_ep_len
         self.embed_timestep = nn.Embedding(self.max_ep_len, self.hidden_size)
         self.embed_return = torch.nn.Linear(1, self.hidden_size)
         self.embed_reward = torch.nn.Linear(1, self.hidden_size)
@@ -170,12 +156,12 @@ class DecisionTransformer(nn.Module):
 
         x = x.reshape(batch_size, seq_length, self.length_times, self.hidden_size).permute(0, 2, 1, 3)
 
-        return_preds = self.predict_return(x[:, 2])
-        state_preds = self.predict_state(x[:, 2])
+        # return_preds = self.predict_return(x[:, 2])
+        # state_preds = self.predict_state(x[:, 2])
         action_preds = self.predict_action(x[:, 1])
 
         # print(state_preds.shape, action_preds.shape, return_preds.shape)
-        return state_preds, action_preds, return_preds, None
+        return None, action_preds, None, None
 
     def get_action(self, states, actions, rewards, returns_to_go, timesteps, **kwargs):
         # we don't care about the past rewards in this model
@@ -193,27 +179,27 @@ class DecisionTransformer(nn.Module):
             timesteps = timesteps[:, -self.max_length:]
 
             attention_mask = torch.cat([torch.zeros(self.max_length - states.shape[1]), torch.ones(states.shape[1])])
-            attention_mask = attention_mask.to(dtype=torch.long, device=states.device).reshape(1, -1)
+            attention_mask = attention_mask.to(dtype=torch.long, device=states.device).reshape(1, -1).to(device=self.device)
             states = torch.cat(
                 [torch.zeros((states.shape[0], self.max_length - states.shape[1], self.state_dim),
                              device=states.device), states],
-                dim=1).to(dtype=torch.float32)
+                dim=1).to(dtype=torch.float32, device=self.device)
             actions = torch.cat(
                 [torch.zeros((actions.shape[0], self.max_length - actions.shape[1], self.act_dim),
                              device=actions.device), actions],
-                dim=1).to(dtype=torch.float32)
+                dim=1).to(dtype=torch.float32, device=self.device)
             returns_to_go = torch.cat(
                 [torch.zeros((returns_to_go.shape[0], self.max_length - returns_to_go.shape[1], 1),
                              device=returns_to_go.device), returns_to_go],
-                dim=1).to(dtype=torch.float32)
+                dim=1).to(dtype=torch.float32, device=self.device)
             rewards = torch.cat(
                 [torch.zeros((rewards.shape[0], self.max_length - rewards.shape[1], 1), device=rewards.device),
                  rewards],
-                dim=1).to(dtype=torch.float32)
+                dim=1).to(dtype=torch.float32, device=self.device)
             timesteps = torch.cat(
                 [torch.zeros((timesteps.shape[0], self.max_length - timesteps.shape[1]), device=timesteps.device),
                  timesteps],
-                dim=1).to(dtype=torch.long)
+                dim=1).to(dtype=torch.long, device=self.device)
         else:
             attention_mask = None
 
@@ -258,14 +244,11 @@ class DecisionTransformer(nn.Module):
             self.eval_states = torch.cat([self.eval_states, cur_state], dim=0)
             self.eval_rewards[-1] = pre_reward
             pred_return = self.eval_target_return[0, -1] - (pre_reward / self.scale)
-            # if target_return != None:
-            #     pred_return = target_return
             self.eval_target_return = torch.cat([self.eval_target_return, pred_return.reshape(1, 1)], dim=1)
             self.eval_timesteps = torch.cat(
                 [self.eval_timesteps, torch.ones((1, 1), dtype=torch.long) * self.eval_timesteps[:, -1] + 1], dim=1)
         self.eval_actions = torch.cat([self.eval_actions, torch.zeros(1, self.act_dim)], dim=0)
         self.eval_rewards = torch.cat([self.eval_rewards, torch.zeros(1)])
-        # print(self.eval_target_return[-1])
         action = self.get_action(
             (self.eval_states.to(dtype=torch.float32) - self.state_mean) / self.state_std,
             self.eval_actions.to(dtype=torch.float32),
